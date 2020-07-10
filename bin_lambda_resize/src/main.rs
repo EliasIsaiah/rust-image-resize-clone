@@ -38,7 +38,7 @@ fn handle_event(event: Value, ctx: lambda::Context) -> Result<(), HandlerError> 
     let config = Config::new();
 
     let s3_event: S3Event =
-        serde_json::from_value(event).map_err(|e| ctx.new_error(e.to_string().as_str()))?;
+        serde_json::from_value(event).map_err(|e| (e.to_string().as_str()))?;
 
     for record in s3_event.records {
         handle_record(&config, record);
@@ -81,11 +81,43 @@ fn handle_record(config: &Config, record: S3EventRecord) {
         }
     }
 
-    let (data, _) = bucket
+    let (data, _) = bucket.
         .get(&source)
         .expect(&format!("Could not get object: {}", &source));
 
     let img = image::load_from_memory(&data)
         .ok()
         .expect("Opening image failed");
+
+    let _: Vec<_> = config
+    .sizes
+    .par_iter()
+    .map(|size| {
+        let buffer = resize_image(&img, &size).expect("Could not resize image");
+
+        let mut target = source.clone();
+        for (rep_key, rep_val) in &config.replacements {
+            target = target.replace(rep_key, rep_val);
+        }
+        target = target.replace(".jpg", &format!("-{}.jpg", size));
+        let (_, code) = bucket
+            .put_object(&target, &buffer, "image/jpeg")
+            .expect(&format!("Could not upload object to :{}", &target));
+        info!("Uploaded: {} with: {}", &target, &code);
+    })
+    .collect();
+}
+
+fn resize_image(img: &image::DynamicImage, new_w: &f32) -> Result<Vec<u8>, ImageError> {
+    let mut result: Vec<u8> = Vec::new();
+
+    let old_w = img.width() as f32;
+    let old_h = img.height() as f32;
+    let ratio = new_w / old_w;
+    let new_h = (old_h * ratio).floor();
+
+    let scaled = img.resize(*new_w as u32, new_h as u32, image::FilterType::Lanczos3);
+    scaled.write_to(&mut result, ImageOutputFormat::JPEG(90))?;
+
+    Ok(result)
 }
