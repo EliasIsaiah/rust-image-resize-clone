@@ -11,7 +11,7 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate simple_logger;
 
-use image::{ImageOutputFormat, GenericImageView, ImageError};
+use image::{GenericImageView, ImageError, ImageOutputFormat};
 
 use rayon::prelude::*;
 use s3::bucket::Bucket;
@@ -39,4 +39,33 @@ fn handle_event(event: Value, ctx: lambda::Context) -> Result<(), HandlerError> 
 
     let s3_event: S3Event =
         serde_json::from_value(event).map_err(|e| ctx.new_error(e.to_string().as_str()))?;
+
+    for record in s3_event.records {
+        handle_record(&config, record);
+    }
+    Ok(())
+}
+
+fn handle_record(config: &Config, record: S3EventRecord) {
+    // let credentials = Credentials::default();
+    let credentials = Credentials::default_blocking().unwrap();
+    let region: Region = record
+        .aws_region
+        .expect("Could not get region from record")
+        .parse()
+        .expect("Could not parse from record");
+    let bucket = Bucket::new(
+        &record
+            .s3
+            .bucket
+            .name
+            .expect("Could not get bucket name from record"),
+        region,
+        credentials,
+    );
+    let source = record
+        .s3
+        .object
+        .key
+        .expect("Could not get key from object record");
 }
